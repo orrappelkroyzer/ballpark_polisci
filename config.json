@@ -1,5 +1,6 @@
 {
     "db_dir" : "C:\\Users\\orkro\\Dropbox\\Documents\\Work\\Academia\\My research\\udi_sommer\\input",
-    "output_dir" : "C:\\Users\\orkro\\Dropbox\\Documents\\Work\\Academia\\My research\\udi_sommer\\output\\polarization"
-    
+    "output_dir" : "C:\\Users\\orkro\\Dropbox\\Documents\\Work\\Academia\\My research\\udi_sommer\\output\\polarization",
+    "temp_filename" : "fake",
+    "gis_dir" : "C:\\Users\\orkro\\Dropbox\\Documents\\Work\\Academia\\My research\\udi_sommer\\input\\GIS"
 }

@@ -13,7 +13,13 @@ import cvxpy as cp
 # import dccp
 import numpy as np
 import pickle 
-
+import os, sys
+from pathlib import Path
+local_python_path = str(Path(__file__).parent)
+if local_python_path not in sys.path:
+   sys.path.append(local_python_path)
+from utils.utils import load_config, get_logger
+logger = get_logger(__name__)
 
 # def feasibility_regression(X, pairwise_constraints_indices, 
 #                            bag_indices,upper_p_bound_bags,
@@ -32,9 +38,9 @@ import pickle
       
 #         # CHECK FOR EMPTY BAGS
 #         if len(bag_high) == 0 or len(bag_low)==0:
-#             #print(pair)
-#             #print(bag_high)
-#             #print(bag_low)
+#             #logger.info(pair)
+#             #logger.info(bag_high)
+#             #logger.info(bag_low)
 #             break
         
 #         scores_high = (1./len(bag_high))*X[bag_high]*theta
@@ -64,22 +70,22 @@ import pickle
 
 #     # add upper average individual constraints
 #     if "all" in upper_p_bound_bags:
-#         #print("all")
+#         #logger.info("all")
 #         current_bag = bag_indices["all"]
-#         #print(len(current_bag))
-#         ##print("all upper")
+#         #logger.info(len(current_bag))
+#         ##logger.info("all upper")
 #         #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
 #         Xw = X[current_bag]*theta
-#         #print(Xw.shape)
+#         #logger.info(Xw.shape)
 #         score_avg = cp.sum((1./len(current_bag))*Xw)
-#         #print(score_avg)
+#         #logger.info(score_avg)
 #         constraints.append(score_avg <= upper_p_bound_bags["all"])
 
 #     # add upper average individual constraints
 #     if "Not In News" in upper_p_bound_bags:
-#         #print("Not In News")
+#         #logger.info("Not In News")
 #         current_bag = bag_indices["Not In News"]
-#         ##print("all upper")
+#         ##logger.info("all upper")
 #         #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
 #         Xw = X[current_bag]*theta
 #         score_avg = cp.sum((1./len(current_bag))*Xw)
@@ -103,7 +109,6 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
                            reg_val=10**-1,v = False):
     
     n_test = sum([len(bag) for bag in bag_list.values()])
-    print(X.shape[1])
     w = cp.Variable(X.shape[1]) #+intercept
     reg = cp.square(cp.norm(w, 2))
     yhat = cp.Variable(X.shape[0]) #+intercept
@@ -115,7 +120,9 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 
     loss = 0
     added_bags_to_loss = []
-    for pair in pairwise_constraints_indices:
+    for i, pair in enumerate(pairwise_constraints_indices):
+        if i%100 == 0:
+            logger.info(f"Building pair {i} out of {len(pairwise_constraints_indices)}")
         bag_high = bag_list[pair[0]]
         bag_low = bag_list[pair[1]]
 
@@ -124,7 +131,7 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
             continue
         
         if pair[0] not in added_bags_to_loss:
-            #print(pair[0])
+            #logger.info(pair[0])
             
             loss += cp.sum_squares(X[bag_high]*w-yhat[bag_high])
             
@@ -135,7 +142,7 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
                 constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) >= lower_p_bound_bags[pair[0]] )
 
         if pair[1] not in added_bags_to_loss: 
-            #print(pair[1])
+            #logger.info(pair[1])
 
             loss += cp.sum_squares(X[bag_low]*w-yhat[bag_low])
             
@@ -156,44 +163,50 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
         else:
             constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) - (1./(len(bag_low)))*cp.sum(yhat[bag_low]) >= 0)
 
+    logger.info("Finished building pairs")
     # add upper average individual constraints
-    if "all" in upper_p_bound_bags:
-        current_bag = bag_list["all"]
-        ##print("all upper")
-        #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
-        score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
-        constraints.append(score_avg <= upper_p_bound_bags["all"])
+    # if "all" in upper_p_bound_bags:
+    #     current_bag = bag_list["all"]
+    #     ##logger.info("all upper")
+    #     #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
+    #     score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
+    #     constraints.append(score_avg <= upper_p_bound_bags["all"])
 
-    if "Not In News" in upper_p_bound_bags:
-        current_bag = bag_list["Not In News"]
-        ##print("all upper")
-        #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
-        score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
-        constraints.append(score_avg <= upper_p_bound_bags["Not In News"])
+    # if "Not In News" in upper_p_bound_bags:
+    #     current_bag = bag_list["Not In News"]
+    #     ##logger.info("all upper")
+    #     #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
+    #     score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
+    #     constraints.append(score_avg <= upper_p_bound_bags["Not In News"])
 
 
-    if "all"  in lower_p_bound_bags:
-        ##print("all lower")
-        current_bag = bag_list["all"]
-        #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])
-        score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
-        constraints.append(score_avg >= lower_p_bound_bags["all"])
+    # if "all"  in lower_p_bound_bags:
+    #     ##logger.info("all lower")
+    #     current_bag = bag_list["all"]
+    #     #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])
+    #     score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
+    #     constraints.append(score_avg >= lower_p_bound_bags["all"])
 
+    logger.info("creating problem")
     prob = cp.Problem(cp.Minimize(loss/n_test + reg_val*reg),constraints = constraints)
     
     try:
-       ##print("dccp: ", dccp.is_dccp(prob))
-       # #print("dcp: ", prob.is_dcp())
+       ##logger.info("dccp: ", dccp.is_dccp(prob))
+        logger.info(f"dcp: {prob.is_dcp()}")
         # prob.solve(method='dccp')
-        prob.solve(verbose=v)
-       # #print('here')
-    except:
-        #print('solving with SCS!!!! NOT DCCP!')
-        prob.solve(solver="SCS")
+        prob.solve(verbose=True)
+        logger.info("Done solving")
+       # #logger.info('here')
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        logger.info('solving with SCS!!!! NOT DCCP!')
+        prob.solve(solver="SCS", verbose=True)
+        logger.info("Done solving")
     w_t = np.squeeze(np.asarray(np.copy(w.value)))
     y_t = np.squeeze(np.asarray(np.copy(yhat.value)))
-    #print("y: ", y_t)
-    #print("PROB2 VALUE ------ " ,prob.value)
+    #logger.info("y: ", y_t)
+    logger.info(f"PROB2 VALUE ------{type(prob.value)}")
     return w_t, y_t,prob.value
 
 
@@ -272,18 +285,18 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 
 
 #     # add top-k constraints
-#     #print('bag list length', len(bag_list))
+#     #logger.info('bag list length', len(bag_list))
 #     for bag in bag_list:
 #         current_bag = bag_list[bag]
 #         n_top = int(top_k_percent*len(current_bag))
 #         if n_top > 0 and len(current_bag) != 240 and len(current_bag) != 1:  # checks for random bags (size 240) and individual bags
-#             #print("percent bag", bag)
+#             #logger.info("percent bag", bag)
 #             constraints.append(cp.sum_largest(yhat[current_bag], n_top) >= top_k_bound_ratio*n_top)
 
 #     prob = cp.Problem(cp.Minimize(cp.sum_squares(w - convex_w)), constraints=constraints)
 
-#     ##print("dccp: ", dccp.is_dccp(prob))
-#     ##print("dcp: ", prob.is_dcp())
+#     ##logger.info("dccp: ", dccp.is_dccp(prob))
+#     ##logger.info("dcp: ", prob.is_dcp())
 #     prob.solve(method='dccp', ccp_times=1)
 #     w_t = np.squeeze(np.asarray(np.copy(w.value)))
 #     y_t = np.squeeze(np.asarray(np.copy(yhat.value)))
@@ -320,8 +333,8 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 
 #         with open(convex_weights_path, 'rb') as handle:
 #             convex_w = pickle.load(handle)#,encoding='iso-8859-1')
-#             #print(convex_w)
-#             #print(convex_w.shape)
+#             #logger.info(convex_w)
+#             #logger.info(convex_w.shape)
 #         w.value = np.array(convex_w)
 #         yhat.value = np.array(convex_y)
 
@@ -374,14 +387,14 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 
 #     if "all" in upper_p_bound_bags:
 #         current_bag = bag_list["all"]
-#         ##print("all upper")
+#         ##logger.info("all upper")
 #         #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
 #         score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
 #         constraints.append(score_avg <= upper_p_bound_bags["all"])
 
 #     if "Not In News" in upper_p_bound_bags:
 #         current_bag = bag_list["Not In News"]
-#         ##print("all upper")
+#         ##logger.info("all upper")
 #         #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
 #         score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
 #         constraints.append(score_avg <= upper_p_bound_bags["Not In News"])
@@ -389,7 +402,7 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 
 
 #     if "all"  in lower_p_bound_bags:
-#         ##print("all lower")
+#         ##logger.info("all lower")
 #         current_bag = bag_list["all"]
 #         #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])
 #         score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
@@ -417,33 +430,33 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 # #        constraints.append(score_avg >= lower_p_bound_bags[bag])
 
 #     # add top-k constraints
-#     #print('bag list length', len(bag_list))
+#     #logger.info('bag list length', len(bag_list))
 #     for bag in bag_list:
 #         current_bag = bag_list[bag]
 #         n_top = int(top_k_percent*len(current_bag))
 #         if n_top > 0 and len(current_bag)> 1:  # checks for individual bags
-#             #print("percent bag", bag)
+#             #logger.info("percent bag", bag)
 #             constraints.append(sum_largest(yhat[current_bag], n_top) >= top_k_bound_ratio*n_top)
 
 #     prob = cp.Problem(cp.Minimize(loss/n_test + reg_val*reg), constraints=constraints)
 
-#     ##print("dccp: ", dccp.is_dccp(prob))
-#     ##print("dcp: ", prob.is_dcp())
+#     ##logger.info("dccp: ", dccp.is_dccp(prob))
+#     ##logger.info("dcp: ", prob.is_dcp())
 #     result  = prob.solve(method='dccp', ccp_times=ccp_times, max_iter=max_iter,verbose=False)
-#     ##print('here_dccp')
-#     #print("PROB2 VALUE ------ " ,result[0])
-#     ##print(prob.status)
+#     ##logger.info('here_dccp')
+#     #logger.info("PROB2 VALUE ------ " ,result[0])
+#     ##logger.info(prob.status)
 
 
 #     '''
 #     try:
-#         #print("dccp: ", dccp.is_dccp(prob))
-#         #print("dcp: ", prob.is_dcp())
+#         #logger.info("dccp: ", dccp.is_dccp(prob))
+#         #logger.info("dcp: ", prob.is_dcp())
 #         prob.solve(method='dccp', ccp_times=1, tau=0.15)
-#         #print('here')
+#         #logger.info('here')
 #         #prob.solve(verbose = v)
 #     except:
-#         #print('solving with SCS!!!! NOT DCCP!')
+#         #logger.info('solving with SCS!!!! NOT DCCP!')
 #         prob.solve(solver="SCS")
 #     '''
 #     w_t = np.squeeze(np.asarray(np.copy(w.value)))
@@ -514,6 +527,6 @@ def solve_w_y2(X,pairwise_constraints_indices,bag_list,
     except:
         prob.solve(solver="SCS")
     w_t = np.squeeze(np.asarray(np.copy(w.value)))
-    #print("PROB VALUE ------ " ,prob.value)
+    #logger.info("PROB VALUE ------ " ,prob.value)
     return(w_t)
 
