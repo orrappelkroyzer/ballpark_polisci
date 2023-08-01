@@ -36,8 +36,10 @@ def create_switches_df():
     df = pd.read_csv(config['db_dir'] / 'db_creation_input' / 'ballpark' / 'hist_party.csv')
     df = df.set_index('ncid')
     df = df.apply(lambda s: s.fillna(method='ffill'), axis=1)
-    df1 = df.apply(lambda s: s[s.notnull() & s.shift().notnull()] != s.shift()[s.notnull() & s.shift().notnull()], axis=1)
-    df1 = df1.fillna(False)
+    df = df.replace({'DEM' : -1, 'REP' : 1, 'LIB' : 1, 'GRE' : -1, 'CST' : 0, 'UNA' : 0})
+    df1 = df.apply(lambda row: row-row.shift(), axis=1)
+    df1 = df1.fillna(0)
+    df1.columns = [date.fromisoformat(x) for x in df1.columns]
     df1.to_csv(config['db_dir'] / 'db_creation_input' / 'ballpark' / 'switches.csv')
     t = {}
     for year in range(2014, 2023, 2):

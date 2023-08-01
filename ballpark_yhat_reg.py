@@ -102,11 +102,11 @@ logger = get_logger(__name__)
 
 
 def solve_w_y(X,pairwise_constraints_indices,bag_list,
-                           upper_p_bound_bags={},lower_p_bound_bags={},
+                           upper_p_bound={},lower_p_bound={},
                            diff_upper_bound_pairs={},diff_lower_bound_pairs={},
                            overall_upper_bound=1,
                            overall_lower_bound=0,
-                           reg_val=10**-1,v = False):
+                           reg_val=10**-1,v = True):
     
     n_test = sum([len(bag) for bag in bag_list.values()])
     w = cp.Variable(X.shape[1]) #+intercept
@@ -120,9 +120,21 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
 
     loss = 0
     added_bags_to_loss = []
+    for i, (bag_index, bag) in enumerate(bag_list.items()):
+        if len(bag) == 0:
+            continue
+        if bag_index in added_bags_to_loss:
+            continue
+        loss += cp.sum_squares(X[bag]@w-yhat[bag])
+        added_bags_to_loss.append(bag_index)
+        upper_bound = upper_p_bound.get(bag_index, 1)
+        lower_bound = lower_p_bound.get(bag_index, 0)
+        logger.info(f"Bounds for {bag_index} ({i} / {len(bag_list)}): {lower_bound}, {upper_bound}")
+        constraints.append((1./(len(bag)))*cp.sum(yhat[bag]) <= upper_bound)
+        constraints.append((1./(len(bag)))*cp.sum(yhat[bag]) >= lower_bound)
+
     for i, pair in enumerate(pairwise_constraints_indices):
-        if i%100 == 0:
-            logger.info(f"Building pair {i} out of {len(pairwise_constraints_indices)}")
+        # logger.info(f"Building pair {i} out of {len(pairwise_constraints_indices)}")
         bag_high = bag_list[pair[0]]
         bag_low = bag_list[pair[1]]
 
@@ -130,78 +142,35 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
         if len(bag_high) == 0 or len(bag_low)==0:
             continue
         
-        if pair[0] not in added_bags_to_loss:
-            #logger.info(pair[0])
-            
-            loss += cp.sum_squares(X[bag_high]*w-yhat[bag_high])
-            
-            if pair[0] in upper_p_bound_bags: 
-                constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) <= upper_p_bound_bags[pair[0]] )
-            
-            if pair[0] in lower_p_bound_bags: 
-                constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) >= lower_p_bound_bags[pair[0]] )
-
-        if pair[1] not in added_bags_to_loss: 
-            #logger.info(pair[1])
-
-            loss += cp.sum_squares(X[bag_low]*w-yhat[bag_low])
-            
-            if pair[1] in upper_p_bound_bags: 
-                constraints.append((1./(len(bag_low)))*cp.sum(yhat[bag_low]) <= upper_p_bound_bags[pair[1]] )
-            
-            if pair[1] in lower_p_bound_bags: 
-                constraints.append((1./(len(bag_low)))*cp.sum(yhat[bag_low]) >= lower_p_bound_bags[pair[1]])
-           
-        added_bags_to_loss.append(pair[0])
-        added_bags_to_loss.append(pair[1])            
-    
         if pair in diff_upper_bound_pairs:
+            logger.info(f"Upper bound for {pair} ({i} / {len(pairwise_constraints_indices)}): {diff_upper_bound_pairs[pair]}")
             constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) - (1./(len(bag_low)))*cp.sum(yhat[bag_low]) <= diff_upper_bound_pairs[pair])
     
         if pair in diff_lower_bound_pairs:
+            logger.info(f"Lower bound for {pair}: ({i} / {len(pairwise_constraints_indices)}): {diff_lower_bound_pairs[pair]}")
             constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) - (1./(len(bag_low)))*cp.sum(yhat[bag_low]) >= diff_lower_bound_pairs[pair])
         else:
+            logger.warning(f"Pair {pair} ({i} / {len(pairwise_constraints_indices)}) not in diff_lower_bound_pairs")
             constraints.append((1./(len(bag_high)))*cp.sum(yhat[bag_high]) - (1./(len(bag_low)))*cp.sum(yhat[bag_low]) >= 0)
 
     logger.info("Finished building pairs")
-    # add upper average individual constraints
-    # if "all" in upper_p_bound_bags:
-    #     current_bag = bag_list["all"]
-    #     ##logger.info("all upper")
-    #     #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
-    #     score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
-    #     constraints.append(score_avg <= upper_p_bound_bags["all"])
 
-    # if "Not In News" in upper_p_bound_bags:
-    #     current_bag = bag_list["Not In News"]
-    #     ##logger.info("all upper")
-    #     #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])  # todo add only if not added
-    #     score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
-    #     constraints.append(score_avg <= upper_p_bound_bags["Not In News"])
-
-
-    # if "all"  in lower_p_bound_bags:
-    #     ##logger.info("all lower")
-    #     current_bag = bag_list["all"]
-    #     #loss += cp.sum_squares(X[current_bag]*w-yhat[current_bag])
-    #     score_avg = (1./len(current_bag))*cp.sum(yhat[current_bag])
-    #     constraints.append(score_avg >= lower_p_bound_bags["all"])
 
     logger.info("creating problem")
     prob = cp.Problem(cp.Minimize(loss/n_test + reg_val*reg),constraints = constraints)
     
     try:
-       ##logger.info("dccp: ", dccp.is_dccp(prob))
-        logger.info(f"dcp: {prob.is_dcp()}")
+        # logger.info("dccp: ", dccp.is_dccp(prob))
+        # logger.info(f"dcp: {prob.is_dcp()}")
         # prob.solve(method='dccp')
-        prob.solve(verbose=True)
+        prob.solve(verbose=v)
         logger.info("Done solving")
        # #logger.info('here')
     except Exception as e:
         import traceback
         traceback.print_exc()
         logger.info('solving with SCS!!!! NOT DCCP!')
-        prob.solve(solver="SCS", verbose=True)
+        prob.solve(solver="SCS", verbose=v)
         logger.info("Done solving")
     w_t = np.squeeze(np.asarray(np.copy(w.value)))
     y_t = np.squeeze(np.asarray(np.copy(yhat.value)))
