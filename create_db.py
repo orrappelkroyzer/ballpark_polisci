@@ -118,7 +118,7 @@ counties_dict = {37001: 'Piedmont',
  37069: 'Piedmont',
  37071: 'Piedmont',
  37073: 'Coastal Plains',
- 37075: 'Coastal Plains',
+ 37075: 'Mountains',
  37077: 'Piedmont',
  37079: 'Coastal Plains',
  37081: 'Greensboro-Winston-Salem',
@@ -276,7 +276,7 @@ def create_db():
     for year in ['2016', '2020']:
         for direction, switch in [('left', -1), ('right', 1)]:
             df.loc[:, f'switch_{year}_{direction}'] = (df[f'switch_{year}'] == switch).astype(int)
-        df[f'D_{year}'] = (df[f'party_{year}'] != 1).apply(int)
+        df[f'D_{year}'] = (df[f'party_{year}'] == -1).apply(int)
         df[f'R_{year}'] = (df[f'party_{year}'] == 1).apply(int)
     logger.info("Writing to file")
     df.to_csv(config['db_dir'] / 'ballpark.csv', index=False)

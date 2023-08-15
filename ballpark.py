@@ -8,18 +8,20 @@ if local_python_path not in sys.path:
 from utils.utils import load_config, get_logger, DATETIME
 logger = get_logger(__name__)
 import argparse
+# import plotly.express as px
 
-IS_WHITE = 'is_white'
-SWITCH_2016 = 'switch_2016'
-SWITCH_2020 = 'switch_2020'
-SWITCH_2020_STRICT = 'switch_2020_strict'
 VOTE_2016 = 'vote_2016'
 VOTE_2016_STRICT = 'vote_2016_strict'
+TURNOUT_2020_STRICT = 'turnout_2020_strict'
 D_REG_2016 = 'D_reg_2016'
 D_REG_2016_WO_UNA = 'D_reg_2016_no_una'
-D_VOTE_2020 = 'D_vote_2020'
+D_REG_2016_STRICT = 'D_reg_2016_strict'
+D_REG_2016_WO_UNA_STRICT = 'D_reg_2016_no_una_strict'
 
-scenarios = [IS_WHITE, SWITCH_2016, SWITCH_2020, SWITCH_2020_STRICT, VOTE_2016, VOTE_2016_STRICT, D_REG_2016, D_REG_2016_WO_UNA, D_VOTE_2020]
+
+scenarios = [VOTE_2016, VOTE_2016_STRICT, D_REG_2016, D_REG_2016_WO_UNA,  D_REG_2016_STRICT,
+              D_REG_2016_WO_UNA_STRICT,  TURNOUT_2020_STRICT]
+strict_scenarios = [VOTE_2016_STRICT, D_REG_2016_STRICT, D_REG_2016_WO_UNA_STRICT, TURNOUT_2020_STRICT]
 import pandas as pd
 from datetime import datetime, date
 import pandas as pd
@@ -28,29 +30,61 @@ import random
 from scipy.stats import ttest_ind
 import warnings
 warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
+import geopandas as gpd
+# from utils.plotly_utils import fix_and_write
 
+def read_data(config, scenario):
+    logger.info("reading data")
+    df =  pd.read_csv(config['db_dir'] / 'ballpark.csv')
+    if scenario in [D_REG_2016_STRICT, D_REG_2016]:
+        df = df[df['party_2016'].notnull()]
+    elif scenario in [D_REG_2016_WO_UNA, D_REG_2016_WO_UNA_STRICT]:
+        df = df[df['party_2016'].notnull() & (df['party_2016'] != 0)]
+    else:
+        df = df
+    df = df[df['age_at_year_end'] >= 23]
+    df['turned_out_2020'] = df['voted_2020'] * (1-df['voted_2016'])
+    df.loc[df['age_at_year_end'].between(18, 30), 'age_group'] = 'below_30'
+    df.loc[df['age_at_year_end'].between(30, 50), 'age_group'] = '30_to_50'
+    df.loc[df['age_at_year_end'].between(50, 65), 'age_group'] = '50_to_65'
+    df.loc[df['age_at_year_end'].between(65, 100), 'age_group'] = 'above_65'
+    for year in range(2014, 2023, 2):
+        df[f'voted_{year}'] = df[f'voted_{year}'].fillna(0)
+    return df
 
+race_dict = {
+        'A' : 'asian',
+        'B' : 'black',
+        'I' : 'native_american',
+        'M' : 'multiracial',
+        'O' : 'of_other_race',
+        'P' : 'pacific_islander',
+        'U' : 'undesignated_race',
+        'W' : 'white',
+        'H' : 'latino'
+    }
+gender_dict = {
+        'M' : 'male',
+        'F' : 'female',
+        'U' : 'undesignated_gender'
+    }
+ 
+def scenario2field(scenario):
+    if scenario in [VOTE_2016, VOTE_2016_STRICT]:
+        field = 'voted_2016'
+    elif scenario == TURNOUT_2020_STRICT:
+        field = 'turned_out_2020'
+    elif scenario in [D_REG_2016, D_REG_2016_WO_UNA, D_REG_2016_STRICT, D_REG_2016_WO_UNA_STRICT]:
+        field = 'D_2016'
+    else:
+        assert False
+    return field
 
 def build_features_table(df, scenario):
     logger.info("creating race features")
-    race_dict = {
-        'A' : 'is_asian',
-        'B' : 'is_black',
-        'I' : 'is_native_american',
-        'M' : 'is_multiracial',
-        'O' : 'is_of_other_race',
-        'P' : 'is_pacific_islander',
-        'U' : 'is_undesignated_race',
-        'W' : 'is_white',
-        'H' : 'is_latino'
-    }
-    race_features = pd.get_dummies(df['race_code']).drop(columns=['W', ' '], errors='ignore').rename(columns=race_dict)
+    race_features = pd.get_dummies(df['race_code']).rename(columns={k: f"is_{v}" for k, v in race_dict.items()})
     logger.info("creating gender features")
-    gender_dict = {
-        'M' : 'is_male',
-        'F' : 'is_female',
-    }
-    gender_features = pd.get_dummies(df['gender_code']).drop(columns=['U', ' '],errors='ignore').rename(columns=gender_dict)
+    gender_features = pd.get_dummies(df['gender_code']).rename(columns={k: f"is_{v}" for k, v in gender_dict.items()})
     logger.info("creating region features")
     state2reagion = {'NC' : 'North Carolina', 'NY' : 'North East', 'OC' : 'Rest of the World', 'VA' : 'South', 'CA' : 'West', 'FL' : 'South', 'PA' : 'North East', 'NJ' : 'North East',
                      'OH' : 'Mid West', 'SC' : 'South', 'IL' : 'Mid West', 'GA' : 'South', 'TX' : 'South', 'MI' : 'Mid West', 'MD' : 'North East', 'MA' : 'North East',
@@ -62,203 +96,297 @@ def build_features_table(df, scenario):
     df.loc[:, 'Birth Region'] = df['birth_state'].replace(state2reagion).fillna('Unspecified')
     birth_regions = pd.get_dummies(df['Birth Region'])
     birth_regions.columns = [f"{x.lower()} origin".replace(" ", "_") for x in birth_regions.columns]
+    logger.info("creating driver_liscence features")
     df.loc[:, 'drivers_lic'] = df['drivers_lic'].replace('Y', 1).replace('N', 0)
+    logger.info("merging")
     X = race_features.\
         join(gender_features).\
             join(birth_regions).\
                 join(df[['drivers_lic', 'age_at_year_end']])
     X['urban'] = df['FIPS'].isin([37183, 37119, 37081, 37067, 37067, 37063])
     X['drivers_lic'] = X['drivers_lic'].apply(int)
-    voting_method_dict_2016 = {
-        'ABSENTEE BY MAIL' : 'voted_absentee_by_mail_2016',
-        'ABSENTEE CURBSIDE' : 'voted_absentee_curbside_2016',
-        'ABSENTEE ONESTOP' : 'voted_absentee_onestop_2016'
-    }
+    
     voting_method_dict_2020 = {
         'ABSENTEE BY MAIL' : 'voted_absentee_by_mail_2020',
         'ABSENTEE CURBSIDE' : 'voted_absentee_curbside_2020',
         'ABSENTEE ONESTOP' : 'voted_absentee_onestop_2020'
     }
 
-    if scenario == IS_WHITE:
-        pass
-    elif scenario == SWITCH_2016:
-        df = df.join(pd.get_dummies(df['voting_method_2020']).drop(columns=['IN-PERSON'],errors='ignore').rename(columns=voting_method_dict_2020))
-        df = df.join(pd.get_dummies(df['voting_method_2016']).drop(columns=['IN-PERSON'],errors='ignore').rename(columns=voting_method_dict_2016))
-        columns = ['D_2016', 'R_2016',  'voted_2016', 'voted_2018', 'median_household_income_2016', '%_college_educated_2016']
-    elif scenario in [SWITCH_2020, SWITCH_2020_STRICT]:
-        columns = ['D_2020', 'R_2020', 'median_household_income_2020', '%_college_educated_2020']
-        df = df.join(pd.get_dummies(df['voting_method_2020']).drop(columns=['IN-PERSON'],errors='ignore').rename(columns=voting_method_dict_2020))
-    elif scenario in [VOTE_2016, VOTE_2016_STRICT]: 
+    if scenario in [VOTE_2016, VOTE_2016_STRICT, TURNOUT_2020_STRICT]: 
         columns = ['D_2016', 'R_2016', 'median_household_income_2016', '%_college_educated_2016']
-    elif scenario in [D_REG_2016, D_REG_2016_WO_UNA]:
+    elif scenario in [D_REG_2016, D_REG_2016_WO_UNA, D_REG_2016_STRICT, D_REG_2016_WO_UNA_STRICT]:
+        # columns = ['median_household_income_2016', '%_college_educated_2016']
         columns = ['voted_2016', 'voted_2018', 'median_household_income_2016', '%_college_educated_2016']
-        df = df.join(pd.get_dummies(df['voting_method_2020']).drop(columns=['IN-PERSON'],errors='ignore').rename(columns=voting_method_dict_2020))
-    elif scenario == D_VOTE_2020:
-        df = df.join(pd.get_dummies(df['voting_method_2020']).drop(columns=['IN-PERSON'],errors='ignore').rename(columns=voting_method_dict_2020))
-        columns = ['D_2020', 'R_2020', 'median_household_income_2020', '%_college_educated_2020']
+        df = df.join(pd.get_dummies(df['voting_method_2020']).rename(columns=voting_method_dict_2020))
     else:
         assert False
     for col in columns:
         X[col] = df[col]
-
+    if '%_college_educated_2020' in X.columns:
+        X['whites_no_college_degree'] = (df['race_code'] == 'W').apply(int) * df['%_college_educated_2020'].apply(lambda x: 1 - x)
+    if '%_college_educated_2016' in X.columns:
+        X['whites_no_college_degree'] = (df['race_code'] == 'W').apply(int) * df['%_college_educated_2016'].apply(lambda x: 1 - x)
+    logger.info(f"X_features columns:\n{X.columns.to_list()}")
     return X
- 
-    
     
 def build_bags(df, scenario):
-    if scenario in [SWITCH_2020_STRICT, VOTE_2016_STRICT, D_REG_2016, D_REG_2016_WO_UNA, D_VOTE_2020]:
-        return df.groupby('FIPS').groups
-    return df.groupby('Region').groups
+    if scenario in strict_scenarios:
+        bags = {f'FIPS_{k}' : v for k, v in df.groupby('FIPS').groups.items()}
+    else:
+        bags = {f'Region_{k}' : v for k, v in df.groupby('Region').groups.items()}
+
+    bags.update({f'Race_{race_dict[k]}' : df.groupby('race_code').groups[k].tolist() for k in ['A', 'B', 'H', 'I', 'U', 'W']})
+    bags.update({f'Gender_{gender_dict[k]}' : v.tolist() for k, v in df.groupby('gender_code').groups.items()})
+    bags.update({f'Age_{k}' : v.tolist() for k, v in df.groupby('age_group').groups.items()})
+    bags['All'] = df.index.tolist()
+    return bags
+   
+def build_probs(df, scenario):
+    logger.info(f"building probabilities for {scenario}")
+    if scenario in strict_scenarios:
+        grouper = 'FIPS'
+    else:
+        grouper = 'Region'
+    field = scenario2field(scenario)    
+    probs = df.groupby(grouper)[[field]].mean().reset_index().rename(columns={grouper : 'bag'})
+    probs['bag'] = probs['bag'].apply(lambda x: f"{grouper}_{x}")
+    if scenario  in strict_scenarios:
+        return probs
+    race_probs = df.groupby('race_code')[[field]].mean().loc[['A', 'B', 'H', 'I', 'U', 'W']].reset_index().rename(columns={'race_code' : 'bag'}).replace(race_dict)
+    race_probs['bag'] = race_probs['bag'].apply(lambda x: f"Race_{x}")
+    gender_probs = df.groupby('gender_code')[[field]].mean().reset_index().rename(columns={'gender_code' : 'bag'}).replace(gender_dict)
+    gender_probs['bag'] = gender_probs['bag'].apply(lambda x: f"Gender_{x}")
+    age_probs = df.groupby('age_group')[[field]].mean().reset_index().rename(columns={'age_group' : 'bag'}).replace(gender_dict)
+    age_probs['bag'] = age_probs['bag'].apply(lambda x: f"Age_{x}")
+    probs = pd.concat([probs, race_probs, gender_probs, age_probs])
+
     
 
-def build_pairwise_constraints_indices(df, scenario):
-    if scenario == IS_WHITE:
-        df['is_white'] = df['race_code'] == 'W'
-        probs = df.groupby('Region')['is_white'].mean().reset_index()
-        probs = probs.sort_values('is_white')
-    elif scenario == VOTE_2016:
-        probs = df.groupby('Region')[['voted_2016', 'voted_2018', 'voted_2020']].mean().reset_index()
-        probs = probs.sort_values('voted_2016')
-    elif scenario == VOTE_2016_STRICT:
-        probs = df.groupby('FIPS')[['voted_2016', 'voted_2018', 'voted_2020']].mean().reset_index()
-        probs = probs.sort_values('voted_2016')
-    elif scenario in [D_REG_2016, D_REG_2016_WO_UNA]:
-        probs = df.groupby('FIPS')[['D_2016']].mean().reset_index()
-        probs = probs.sort_values('D_2016')
-    elif scenario == D_VOTE_2020:
-        probs = pd.read_csv(config['db_dir'] / 'db_creation_input' / 'ballpark' / '2020_election_results.csv')[['FIPS', 'D_2020']]
-        probs = probs.sort_values('D_2020')
-    elif scenario == SWITCH_2020_STRICT:
-        probs = df.groupby('FIPS')[['switch_2016', 'switch_2020', 'switch_2016_right', 'switch_2016_left', 'switch_2020_right', 'switch_2020_left']].mean().reset_index()
-        probs = probs.sort_values('switch_2020_right')
-    else:
-        probs = df.groupby('Region')[['switch_2016', 'switch_2020', 'switch_2016_right', 'switch_2016_left', 'switch_2020_right', 'switch_2020_left']].mean().reset_index()
-        if scenario == SWITCH_2020:
-            probs = probs.sort_values('switch_2020_right')
-        elif scenario == SWITCH_2016:
-            probs = probs.sort_values('switch_2016_right')
-        else:
-            assert False
-    
+    return probs
+
+def build_pairwise_constraints(probs, scenario):
+    logger.info(f"building pairwise constraints for {scenario}")
+    if scenario in strict_scenarios:
+        return []
+    field = scenario2field(scenario)
+    probs = probs.sort_values(field)
     probs['temp'] = 1
     probs['order'] = range(len(probs))
-    prob_pairs = probs.merge(probs, on='temp', how='outer')
-    prob_pairs = prob_pairs[prob_pairs['order_x'] > prob_pairs['order_y']].drop(columns=['order_x', 'order_y', 'temp'])
+    pairwise_constraints_indices = []
+    county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')]
+    race_probs = probs[probs['bag'].str.startswith('Race')]
+    gender_probs = probs[probs['bag'].str.startswith('Gender')]
+    prob_pairs_list = []
+    for t_probs in [county_region_probs, race_probs, gender_probs]:
+        t_prob_pairs = t_probs.merge(t_probs, on='temp', how='outer')
+        prob_pairs_list += [t_prob_pairs[t_prob_pairs['order_x'] > t_prob_pairs['order_y']].drop(columns=['order_x', 'order_y', 'temp'])]
+    prob_pairs = pd.concat(prob_pairs_list)
+    pairwise_constraints_indices += [tuple(x) for x in prob_pairs[['bag_x', 'bag_y']].values.tolist()]
+    return pairwise_constraints_indices
+    
+def create_upper_p_bounds(probs, scenario):
+    county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')].set_index('bag')
+    constraints = {}
+    if scenario in strict_scenarios:
+        constraints.update((county_region_probs[scenario2field(scenario)] + 0.0005).to_dict())
     if scenario == VOTE_2016:
-        prob_pairs['diff_2016'] = prob_pairs['voted_2016_x'] - prob_pairs['voted_2016_y']
-        pairwise_constraints_indices = [tuple(x) for x in prob_pairs.loc[prob_pairs['diff_2016'] >= 0.019, ['Region_x', 'Region_y']].values.tolist()]
-    if scenario in [VOTE_2016_STRICT, D_REG_2016, D_REG_2016_WO_UNA, D_VOTE_2020, SWITCH_2020_STRICT]:
-        pairwise_constraints_indices = [] # [tuple(x) for x in prob_pairs[['FIPS_x', 'FIPS_y']].values.tolist()]
-    else:
-        pairwise_constraints_indices = [tuple(x) for x in prob_pairs[['Region_x', 'Region_y']].values.tolist()]
-    return probs, pairwise_constraints_indices
+        constraints.update((county_region_probs[scenario2field(scenario)] + 0.2).to_dict())
+        constraints.update({'Race_undesignated_race'    :   0.5,
+                            'Race_asian'                :   0.7,
+                            'Race_latino'               :   0.8,
+                            'Race_native_american'      :   0.9,
+                            'Race_white'                :   1,
+                            'Race_black'                :   1})
+        constraints.update({'Gender_male'               :   1,
+                            'Gender_female'             :   1})
+        constraints.update({'Age_below_30'              :   0.6,
+                            'Age_30_to_50'              :   0.8,
+                            'Age_50_to_65'              :   0.9,
+                            'Age_above_65'              :   0.9})
+        constraints['All'] = 1
+    if scenario == D_REG_2016:
+        constraints.update((county_region_probs[scenario2field(scenario)] + 0.1).to_dict())
+        constraints.update({'Race_undesignated_race'    :   0.5,
+                            'Race_asian'                :   0.3,
+                            'Race_latino'               :   0.5,
+                            'Race_native_american'      :   0.8,
+                            'Race_white'                :   0.25,
+                            'Race_black'                :   1})
+        constraints.update({'Gender_male'               :   0.5,
+                            'Gender_female'             :   0.6})
+        constraints['All'] = 0.45
+        pass
+        
+    if scenario == D_REG_2016_WO_UNA:
+        constraints.update((county_region_probs[scenario2field(scenario)] + 0.05).to_dict())
+        constraints.update({'Race_undesignated_race'    :   0.7,
+                            'Race_asian'                :   0.75,
+                            'Race_latino'               :   0.85,
+                            'Race_native_american'      :   0.85,
+                            'Race_white'                :   0.4,
+                            'Race_black'                :   1})
+        constraints.update({'Gender_male'               :   0.5,
+                            'Gender_female'             :   0.6,
+                            'Gender_undesignated_gender':   0.6})
+        constraints['All'] = 0.6
+        pass
 
-def create_upper_p_bounds(bags, probs, scenario):
-    if scenario in [SWITCH_2020, SWITCH_2016]:
-        return {bag : 0.03 for bag in bags.keys()}
-    if scenario == SWITCH_2020_STRICT:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['switch_2020'] + 0.0005 for bag in bags.keys()}
-    if scenario == VOTE_2016_STRICT:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['voted_2016'] + 0.0005 for bag in bags.keys()}
-    if scenario in [D_REG_2016, D_REG_2016_WO_UNA]:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['D_2020'] + 0.0005 for bag in bags.keys()}
-    if scenario in [D_VOTE_2020]:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['D_2020'] + 0.0005 for bag in bags.keys()}
-    
+    return constraints
 
-    return {}
-    
-
-def create_lower_p_bounds(bags, probs, scenario):
-    if scenario == SWITCH_2020_STRICT:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['switch_2020'] - 0.005 for bag in bags.keys()}
-    if scenario == VOTE_2016_STRICT:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['voted_2016'] - 0.005 for bag in bags.keys()}
-    if scenario in [D_REG_2016, D_REG_2016_WO_UNA]:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['D_2020'] - 0.0005 for bag in bags.keys()}
-    if scenario in [D_VOTE_2020]:
-        probs_by_region = probs.set_index('FIPS')
-        return {bag: probs_by_region.loc[bag]['D_2020'] - 0.0005 for bag in bags.keys()}
-    
-    return {}
+def create_lower_p_bounds(probs, scenario):
+    county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')].set_index('bag')
+    probs[probs['bag'].str.startswith('Race')].set_index('bag')
+    probs[probs['bag'].str.startswith('Gender')].set_index('bag')
+    constraints = {}
+    if scenario in strict_scenarios:
+        constraints.update((county_region_probs[scenario2field(scenario)] - 0.0005).to_dict())
+    if scenario == VOTE_2016:
+        constraints.update((county_region_probs[scenario2field(scenario)] - 0.2).to_dict())
+        constraints.update({'Race_undesignated_race'    :   0.2,
+                            'Race_asian'                :   0.4,
+                            'Race_latino'               :   0.5,
+                            'Race_native_american'      :   0.6,
+                            'Race_white'                :   0.75,
+                            'Race_black'                :   0.75})
+        constraints.update({'Gender_male'               :   0.7,
+                            'Gender_female'             :   0.9})
+        constraints['All'] = 0.8
+    if scenario == D_REG_2016:
+        constraints.update((county_region_probs[scenario2field(scenario)] - 0.1).to_dict())
+        constraints.update({'Race_undesignated_race'    :   0.3,
+                            'Race_asian'                :   0.55,
+                            'Race_latino'               :   0.6,
+                            'Race_native_american'      :   0.6,
+                            'Race_white'                :   0.25,
+                            'Race_black'                :   0.95})
+        constraints.update({'Gender_male'               :   0.1,
+                            'Gender_female'             :   0.2})
+        constraints['All'] = 0.35
+        pass
+    if scenario == D_REG_2016_WO_UNA:
+        constraints.update((county_region_probs[scenario2field(scenario)] - 0.05).to_dict())
+        constraints.update({'Race_undesignated_race'    :   0.5,
+                            'Race_asian'                :   0.3,
+                            'Race_latino'               :   0.5,
+                            'Race_native_american'      :   0.8,
+                            'Race_white'                :   0.25,
+                            'Race_black'                :   0.9})
+        constraints.update({'Gender_male'               :   0.4,
+                            'Gender_female'             :   0.5,
+                            'Gender_undesignated_gender':   0.4})
+        constraints['All'] = 0.45
+        pass
+    return constraints
 
 def create_upper_diff_bounds(probs, pairwise_constraints_indices, scenario):
+    if scenario in strict_scenarios:
+        return {}
+    county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')].set_index('bag')
+    race_probs = probs[probs['bag'].str.startswith('Race')].set_index('bag')
+    gender_probs = probs[probs['bag'].str.startswith('Gender')].set_index('bag')
+    county_region_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in county_region_probs.index]
+    race_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in race_probs.index]
+    gender_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in gender_probs.index]
+    
+    constraints = {}
     if scenario == VOTE_2016:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (probs_by_region.loc[pair[0]]-probs_by_region.loc[pair[1]])['voted_2016']*2 for pair in pairwise_constraints_indices}   
+        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['voted_2016']*2 
+        #                     for pair in county_region_pairwise_constraints})
+        # constraints.update({pair: 0.15
+        #                     for pair in race_pairwise_constraints})
+        # constraints[('Race_black', 'Race_white')] = 0.03
+        # constraints[('Gender_female', 'Gender_male')] = 0.01
+        pass
+    if scenario == D_REG_2016:
+        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']*2.5 
+        #                     for pair in county_region_pairwise_constraints})
+        # constraints.update({pair: 0.15
+        #                     for pair in race_pairwise_constraints})
+        # constraints[('Gender_female', 'Gender_male')] = 0.1
+        pass
+    if scenario == D_REG_2016_WO_UNA:
+        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']+0.03 
+        #                     for pair in county_region_pairwise_constraints})
+        # constraints.update({('Race_black', 'Race_latino'): 0.3,
+        #                     ('Race_black', 'Race_white'): 0.8,
+        #                     ('Race_latino', 'Race_white'): 0.4})
+        # constraints[('Gender_female', 'Gender_male')] = 0.15
+        pass
+    return constraints
 
 def create_lower_diff_bounds(probs, pairwise_constraints_indices, scenario):
-    if scenario == IS_WHITE:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (int((probs_by_region.loc[pair[0]]-probs_by_region.loc[pair[1]])['is_white']*100)+1)/100 for pair in pairwise_constraints_indices}
+    if scenario in strict_scenarios:
+        return {}
+    county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')].set_index('bag')
+    race_probs = probs[probs['bag'].str.startswith('Race')].set_index('bag')
+    gender_probs = probs[probs['bag'].str.startswith('Gender')].set_index('bag')
+    county_region_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in county_region_probs.index]
+    race_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in race_probs.index]
+    gender_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in gender_probs.index]
+    constraints = {}
     if scenario == VOTE_2016:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (probs_by_region.loc[pair[0]]-probs_by_region.loc[pair[1]])['voted_2016']/2 for pair in pairwise_constraints_indices}   
-    return {}
+        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['voted_2016']*0.2 
+        #                     for pair in county_region_pairwise_constraints})
+        # constraints.update({pair: -0.05
+        #                     for pair in race_pairwise_constraints})
+        # constraints[('Gender_female', 'Gender_male')] = -0.05
+        pass
+    if scenario == D_REG_2016:
+        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']*0.2
+        #                     for pair in county_region_pairwise_constraints})
+        # constraints.update({pair: 0
+        #                     for pair in race_pairwise_constraints})
+        # constraints[('Gender_female', 'Gender_male')] = -0.01
+        pass
+    if scenario == D_REG_2016_WO_UNA:
+        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']-0.03 
+        #                     for pair in county_region_pairwise_constraints})
+        # constraints.update({('Race_black', 'Race_latino'): 0.2,
+        #                     ('Race_black', 'Race_white'): 0.55,
+        #                     ('Race_latino', 'Race_white'): 0.3})
+        # constraints[('Gender_female', 'Gender_male')] = 0.08
+        pass
+    return constraints
 
 def create_upper_ratio_bounds(probs, pairwise_constraints_indices, scenario):
-    if scenario == SWITCH_2016:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (probs_by_region.loc[pair[0]]/probs_by_region.loc[pair[1]])['switch_2016_right'] +0.15 for pair in pairwise_constraints_indices}
-    if scenario == SWITCH_2020:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (probs_by_region.loc[pair[0]]/probs_by_region.loc[pair[1]])['switch_2020_right'] +0.01 for pair in pairwise_constraints_indices}
     return {}
     
 def create_lower_ratio_bounds(probs, pairwise_constraints_indices, scenario):
-    if scenario == SWITCH_2016:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (probs_by_region.loc[pair[0]]/probs_by_region.loc[pair[1]])['switch_2016_right']-0.4 for pair in pairwise_constraints_indices}
-    if scenario == SWITCH_2020:
-        probs_by_region = probs.set_index('Region')
-        return {pair: (probs_by_region.loc[pair[0]]/probs_by_region.loc[pair[1]])['switch_2020_right']-0.01 for pair in pairwise_constraints_indices}
     return {}
 
-def solve_ballpark(scenario):
+def prepare_data(scenario, config):
 
     logger.info('Reading data')
-    df_orig =  pd.read_csv(config['db_dir'] / 'ballpark.csv')
-    df = df_orig.sample(200000) #pd.concat([df[df['2016'] == 0].sample(df['2016'].sum()), df[df['2016'] == 1]])
+    df_orig = read_data(config, scenario)
+    df = df_orig#.sample(100000) 
     indices = df.index
     df = df.reset_index(drop=True)
     X_df = build_features_table(df, scenario).join(df[['switch_2016', 'switch_2020']])
     X_features = X_df.values
     X_df.index = indices
     bags = build_bags(df, scenario=scenario)
-    probs, pairwise_constraints = build_pairwise_constraints_indices(df_orig, scenario=scenario)
-    upper_p_bound = create_upper_p_bounds(bags, probs, scenario=scenario)
-    lower_p_bound = create_lower_p_bounds(bags, probs, scenario=scenario)
+    probs = build_probs(df_orig, scenario=scenario)
+    pairwise_constraints = build_pairwise_constraints(probs=probs, scenario=scenario)
+    upper_p_bound = create_upper_p_bounds(probs, scenario=scenario)
+    lower_p_bound = create_lower_p_bounds(probs, scenario=scenario)
     diff_upper_bound_pairs = create_upper_diff_bounds(probs, pairwise_constraints, scenario=scenario)
     diff_lower_bound_pairs = create_lower_diff_bounds(probs, pairwise_constraints, scenario=scenario)
-    ratio_upper_bound_pairs = create_upper_ratio_bounds(probs, pairwise_constraints, scenario=scenario)
-    ratio_lower_bound_pairs = create_lower_ratio_bounds(probs, pairwise_constraints, scenario=scenario)
-    # logger.info(f"X_features shape: {X_features.shape},  {len(bags)} bags")
-    # logger.info(f"pairwise constraints: {pairwise_constraints}")
-    # logger.info(f"upper_p_bound_bags: {upper_p_bound_bags}")
-    # logger.info(f"lower_p_bound_bags: {lower_p_bound_bags}")
-    # logger.info(f"diff_upper_bound_pairs: {upper_diff_bound_bags}")
-    # logger.info(f"diff_lower_bound_pairs: {lower_diff_bound_bags}")
-
-    logger.info("solving")
-    w_t,y_t,loss_bp = solve_w_y(X=X_features, 
+    # ratio_upper_bound_pairs = create_upper_ratio_bounds(probs, pairwise_constraints, scenario=scenario)
+    # ratio_lower_bound_pairs = create_lower_ratio_bounds(probs, pairwise_constraints, scenario=scenario)
+    return indices, probs,  dict(X=X_features, 
                             pairwise_constraints_indices=pairwise_constraints,
                             bag_list=bags,
                             upper_p_bound=upper_p_bound,
                             lower_p_bound=lower_p_bound,
                             diff_upper_bound_pairs=diff_upper_bound_pairs,
-                            diff_lower_bound_pairs=diff_lower_bound_pairs,
-                            ratio_upper_bound_pairs=ratio_upper_bound_pairs,
-                            ratio_lower_bound_pairs=ratio_lower_bound_pairs)
-    return pd.Series(w_t),  pd.Series(y_t, index=indices), loss_bp, X_df
+                            diff_lower_bound_pairs=diff_lower_bound_pairs)
+                            # ratio_upper_bound_pairs=ratio_upper_bound_pairs,
+                            # ratio_lower_bound_pairs=ratio_lower_bound_pairs)
 
+def solve(indices, params):
+    logger.info("solving")
+    w_t,y_t,loss_bp = solve_w_y(**params)
+    return pd.Series(w_t),  pd.Series(y_t, index=indices), loss_bp
 
 def parse_args():
     # Create an argument parser
@@ -275,18 +403,44 @@ def parse_args():
     # Parse the provided arguments
     args = parser.parse_args()
     scenario = args.scenario
-    global config
     config = load_config(output_dir_suffix=scenario, add_date=DATETIME)
     logger.info(f"Scenario: {scenario}")
     logger.info(f"Output dir: {config['output_dir']}")
-    return scenario
+    return scenario, config
+
+def plot_probs(probs, scenario):
+    field = scenario2field(scenario)
+    probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')]
+    if probs['bag'].iloc[0].startswith('Region'):
+        probs['Region'] = probs['bag'].str.split('_').str[1]
+        gdf = gpd.read_file(config['db_dir'] / 'GIS' / "NC_regions" / "NC_regions.shp")
+        gdf = gdf.set_index('Region')
+        locations_field = 'Region'
+    elif probs['bag'].iloc[0].startswith('FIPS'):
+        probs['FIPS'] = probs['bag'].str.split('_').str[1]
+        gdf = gpd.read_file(config['db_dir'] / 'GIS' / "counties.shp")
+        gdf = gdf[gdf['state'] == 'North Carolina'].set_index('FIPS')[['geometry']]
+        locations_field = 'FIPS'
+    else:
+        assert False
+    fig = px.choropleth(probs,
+                        geojson=gdf,
+                        locations=locations_field,
+                        color=field,
+                        projection='albers usa',
+                        title=field)
+    fig.update_geos(fitbounds='locations', scope='usa')
+    fix_and_write(fig, output_dir=config['output_dir'], filename=scenario)    
+        
 
 if __name__ == "__main__":   
     
-    scenario = parse_args()    
-    w_t, y_t, loss_bp, X_df = solve_ballpark(scenario=scenario)
+    scenario, config = parse_args()    
+    indices, probs, params = prepare_data(scenario, config)
+    # plot_probs(probs=probs, scenario=scenario)
+    w_t, y_t, loss_bp = solve(indices=indices, params=params)
     logger.info("saving results")
-    X_df.to_csv(config['output_dir'] / f'X_df.csv')
+    # X_df.to_csv(config['output_dir'] / f'X_df.csv')
     w_t.to_csv(config['output_dir'] / f'w_t.csv')
     y_t.to_csv(config['output_dir'] / f'y_t.csv')
     logger.info(f"Ballpark loss: {loss_bp}")

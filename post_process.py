@@ -61,9 +61,7 @@ def post_process(df_orig, subdir, fields):
 def main():
    logger.info(f"Reading df_orig")
    df_orig = pd.read_csv(config['db_dir'] / 'ballpark.csv')
-   post_process(df_orig=df_orig, subdir=r"vote_2016_strict\2023-08-10_22-38", fields=['voted_2016', 'voted_2020'])
-   post_process(df_orig=df_orig, subdir=r"vote_2016\2023-08-10_22-38", fields=['voted_2016', 'voted_2020'])
-   post_process(df_orig=df_orig, subdir=r"switch_2020\2023-08-10_22-38", fields=['switch_2020'])
-
+   post_process(df_orig=df_orig, subdir=r"vote_2016\2023-08-14_07-47", fields=['voted_2016', 'voted_2020'])
+   
 if __name__ == '__main__':
    main()
