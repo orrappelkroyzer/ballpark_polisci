@@ -176,8 +176,9 @@ def build_pairwise_constraints(probs, scenario):
     county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')]
     race_probs = probs[probs['bag'].str.startswith('Race')]
     gender_probs = probs[probs['bag'].str.startswith('Gender')]
+    age_probs = probs[probs['bag'].str.startswith('Age')]
     prob_pairs_list = []
-    for t_probs in [county_region_probs, race_probs, gender_probs]:
+    for t_probs in [county_region_probs, race_probs, gender_probs, age_probs]:
         t_prob_pairs = t_probs.merge(t_probs, on='temp', how='outer')
         prob_pairs_list += [t_prob_pairs[t_prob_pairs['order_x'] > t_prob_pairs['order_y']].drop(columns=['order_x', 'order_y', 'temp'])]
     prob_pairs = pd.concat(prob_pairs_list)
@@ -191,27 +192,13 @@ def create_upper_p_bounds(probs, scenario):
         constraints.update((county_region_probs[scenario2field(scenario)] + 0.0005).to_dict())
     if scenario == VOTE_2016:
         constraints.update((county_region_probs[scenario2field(scenario)] + 0.2).to_dict())
-        constraints.update({'Race_undesignated_race'    :   0.5,
-                            'Race_asian'                :   0.7,
-                            'Race_latino'               :   0.8,
-                            'Race_native_american'      :   0.9,
-                            'Race_white'                :   1,
-                            'Race_black'                :   1})
-        constraints.update({'Gender_male'               :   1,
-                            'Gender_female'             :   1})
-        constraints.update({'Age_below_30'              :   0.6,
-                            'Age_30_to_50'              :   0.8,
-                            'Age_50_to_65'              :   0.9,
-                            'Age_above_65'              :   0.9})
+        constraints.update({'Race_latino'               :   0.8})
+        constraints.update({'Age_below_30'              :   0.6})
         constraints['All'] = 1
     if scenario == D_REG_2016:
         constraints.update((county_region_probs[scenario2field(scenario)] + 0.1).to_dict())
-        constraints.update({'Race_undesignated_race'    :   0.5,
-                            'Race_asian'                :   0.3,
-                            'Race_latino'               :   0.5,
-                            'Race_native_american'      :   0.8,
-                            'Race_white'                :   0.25,
-                            'Race_black'                :   1})
+        constraints.update({'Race_latino'               :   0.6,
+                            'Race_white'                :   0.25})
         constraints.update({'Gender_male'               :   0.5,
                             'Gender_female'             :   0.6})
         constraints['All'] = 0.45
@@ -219,12 +206,8 @@ def create_upper_p_bounds(probs, scenario):
         
     if scenario == D_REG_2016_WO_UNA:
         constraints.update((county_region_probs[scenario2field(scenario)] + 0.05).to_dict())
-        constraints.update({'Race_undesignated_race'    :   0.7,
-                            'Race_asian'                :   0.75,
-                            'Race_latino'               :   0.85,
-                            'Race_native_american'      :   0.85,
-                            'Race_white'                :   0.4,
-                            'Race_black'                :   1})
+        constraints.update({'Race_latino'               :   0.85,
+                            'Race_white'                :   0.4})
         constraints.update({'Gender_male'               :   0.5,
                             'Gender_female'             :   0.6,
                             'Gender_undesignated_gender':   0.6})
@@ -242,10 +225,7 @@ def create_lower_p_bounds(probs, scenario):
         constraints.update((county_region_probs[scenario2field(scenario)] - 0.0005).to_dict())
     if scenario == VOTE_2016:
         constraints.update((county_region_probs[scenario2field(scenario)] - 0.2).to_dict())
-        constraints.update({'Race_undesignated_race'    :   0.2,
-                            'Race_asian'                :   0.4,
-                            'Race_latino'               :   0.5,
-                            'Race_native_american'      :   0.6,
+        constraints.update({'Race_latino'               :   0.5,
                             'Race_white'                :   0.75,
                             'Race_black'                :   0.75})
         constraints.update({'Gender_male'               :   0.7,
@@ -253,22 +233,16 @@ def create_lower_p_bounds(probs, scenario):
         constraints['All'] = 0.8
     if scenario == D_REG_2016:
         constraints.update((county_region_probs[scenario2field(scenario)] - 0.1).to_dict())
-        constraints.update({'Race_undesignated_race'    :   0.3,
-                            'Race_asian'                :   0.55,
-                            'Race_latino'               :   0.6,
-                            'Race_native_american'      :   0.6,
-                            'Race_white'                :   0.25,
-                            'Race_black'                :   0.95})
+        constraints.update({'Race_latino'               :   0.5,
+                            'Race_white'                :   0.1,
+                            'Race_black'                :   0.6})
         constraints.update({'Gender_male'               :   0.1,
                             'Gender_female'             :   0.2})
         constraints['All'] = 0.35
         pass
     if scenario == D_REG_2016_WO_UNA:
         constraints.update((county_region_probs[scenario2field(scenario)] - 0.05).to_dict())
-        constraints.update({'Race_undesignated_race'    :   0.5,
-                            'Race_asian'                :   0.3,
-                            'Race_latino'               :   0.5,
-                            'Race_native_american'      :   0.8,
+        constraints.update({'Race_latino'               :   0.5,
                             'Race_white'                :   0.25,
                             'Race_black'                :   0.9})
         constraints.update({'Gender_male'               :   0.4,
@@ -281,21 +255,13 @@ def create_lower_p_bounds(probs, scenario):
 def create_upper_diff_bounds(probs, pairwise_constraints_indices, scenario):
     if scenario in strict_scenarios:
         return {}
-    county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')].set_index('bag')
-    race_probs = probs[probs['bag'].str.startswith('Race')].set_index('bag')
-    gender_probs = probs[probs['bag'].str.startswith('Gender')].set_index('bag')
-    county_region_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in county_region_probs.index]
-    race_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in race_probs.index]
-    gender_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in gender_probs.index]
+    age_probs = probs[probs['bag'].str.startswith('Gender')].set_index('bag')
+    age_constraints = [x for x in pairwise_constraints_indices if x[0] in age_probs.index]
     
     constraints = {}
     if scenario == VOTE_2016:
-        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['voted_2016']*2 
-        #                     for pair in county_region_pairwise_constraints})
-        # constraints.update({pair: 0.15
-        #                     for pair in race_pairwise_constraints})
-        # constraints[('Race_black', 'Race_white')] = 0.03
-        # constraints[('Gender_female', 'Gender_male')] = 0.01
+        constraints[('Race_black', 'Race_white')] = 0.05
+        constraints[('Gender_female', 'Gender_male')] = 0.03
         pass
     if scenario == D_REG_2016:
         # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']*2.5 
@@ -305,12 +271,13 @@ def create_upper_diff_bounds(probs, pairwise_constraints_indices, scenario):
         # constraints[('Gender_female', 'Gender_male')] = 0.1
         pass
     if scenario == D_REG_2016_WO_UNA:
-        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']+0.03 
-        #                     for pair in county_region_pairwise_constraints})
-        # constraints.update({('Race_black', 'Race_latino'): 0.3,
-        #                     ('Race_black', 'Race_white'): 0.8,
-        #                     ('Race_latino', 'Race_white'): 0.4})
-        # constraints[('Gender_female', 'Gender_male')] = 0.15
+        constraints.update({('Race_black', 'Race_latino'): 0.4,
+                            ('Race_black', 'Race_white'): 0.8,
+                            ('Race_latino', 'Race_white'): 0.4})
+        constraints[('Gender_female', 'Gender_male')] = 0.15
+        constraints.update({pair: 0.1
+                            for pair in age_constraints})
+        
         pass
     return constraints
 
@@ -318,18 +285,25 @@ def create_lower_diff_bounds(probs, pairwise_constraints_indices, scenario):
     if scenario in strict_scenarios:
         return {}
     county_region_probs = probs[probs['bag'].str.startswith('FIPS') | probs['bag'].str.startswith('Region')].set_index('bag')
-    race_probs = probs[probs['bag'].str.startswith('Race')].set_index('bag')
-    gender_probs = probs[probs['bag'].str.startswith('Gender')].set_index('bag')
     county_region_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in county_region_probs.index]
-    race_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in race_probs.index]
-    gender_pairwise_constraints = [x for x in pairwise_constraints_indices if x[0] in gender_probs.index]
+    age_probs = probs[probs['bag'].str.startswith('Gender')].set_index('bag')
+    age_constraints = [x for x in pairwise_constraints_indices if x[0] in age_probs.index]
+    
     constraints = {}
     if scenario == VOTE_2016:
-        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['voted_2016']*0.2 
-        #                     for pair in county_region_pairwise_constraints})
-        # constraints.update({pair: -0.05
-        #                     for pair in race_pairwise_constraints})
-        # constraints[('Gender_female', 'Gender_male')] = -0.05
+        constraints.update({pair: -0.1
+                            for pair in county_region_pairwise_constraints})
+        constraints[('Race_black', 'Race_white')] = -0.05
+        constraints[('Race_black', 'Race_latino')] = 0
+        constraints[('Race_white', 'Race_latino')] = 0
+        constraints[('Gender_female', 'Gender_male')] = -0.05
+        constraints[('Age_above_65', 'Age_50_to_65')] = 0
+        constraints[('Age_above_65', 'Age_30_to_50')] = 0.05
+        constraints[('Age_50_to_65', 'Age_30_to_50')] = 0
+        constraints[('Age_above_65', 'Age_below_30')] = 0.1
+        constraints[('Age_50_to_65', 'Age_below_30')] = 0.1
+        constraints[('Age_30_to_50', 'Age_below_30')] = 0.1
+
         pass
     if scenario == D_REG_2016:
         # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']*0.2
@@ -339,12 +313,14 @@ def create_lower_diff_bounds(probs, pairwise_constraints_indices, scenario):
         # constraints[('Gender_female', 'Gender_male')] = -0.01
         pass
     if scenario == D_REG_2016_WO_UNA:
-        # constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']-0.03 
-        #                     for pair in county_region_pairwise_constraints})
-        # constraints.update({('Race_black', 'Race_latino'): 0.2,
-        #                     ('Race_black', 'Race_white'): 0.55,
-        #                     ('Race_latino', 'Race_white'): 0.3})
-        # constraints[('Gender_female', 'Gender_male')] = 0.08
+        constraints.update({pair: (county_region_probs.loc[pair[0]]-county_region_probs.loc[pair[1]])['D_2016']-0.03 
+                            for pair in county_region_pairwise_constraints})
+        constraints.update({('Race_black', 'Race_latino'): 0.2,
+                            ('Race_black', 'Race_white'): 0.5,
+                            ('Race_latino', 'Race_white'): 0.2})
+        constraints[('Gender_female', 'Gender_male')] = 0.05
+        constraints.update({pair: -0.1
+                            for pair in age_constraints})
         pass
     return constraints
 
@@ -358,7 +334,7 @@ def prepare_data(scenario, config):
 
     logger.info('Reading data')
     df_orig = read_data(config, scenario)
-    df = df_orig#.sample(100000) 
+    df = df_orig.sample(500000) 
     indices = df.index
     df = df.reset_index(drop=True)
     X_df = build_features_table(df, scenario).join(df[['switch_2016', 'switch_2020']])

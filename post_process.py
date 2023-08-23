@@ -14,13 +14,12 @@ import plotly.graph_objects as go
 from utils.plotly_utils import fix_and_write
 import ballpark as bp
 from sklearn.linear_model import LinearRegression
+from sklearn import metrics
 
 
 def post_process(df_orig, subdir, fields):
-   global scenario
-   scenario = Path(subdir).parts[-2]
-   input_dir = config['output_dir'].parent / subdir
    
+   input_dir = config['output_dir'].parent / subdir
    logger.info(f"Reading y_t")
    y_t = pd.read_csv(input_dir / "y_t.csv")
    y_t = pd.Series(y_t['0'].values, index=y_t['Unnamed: 0'].values, name="y_t")
@@ -28,14 +27,13 @@ def post_process(df_orig, subdir, fields):
    df = df[df['y_t'].notnull()]
    logger.info(f"calculating ROC curve")
    title = ' '.join(word.capitalize() for word in scenario.split('_'))
+   auc_scores = {}
    fig = go.Figure()
    for field in fields:
-      ROC_curve = pd.DataFrame([{'x' : x, 
-                           'TPR' : ((df['y_t'] > x) & (df[field] == 1)).sum()/(df[field] == 1).sum(),
-                           'FPR' : ((df['y_t'] > x) & (df[field] != 1)).sum()/(df[field] != 1).sum()} 
-                           for x in np.arange(0,1.1, .01)])
-   
-      fig.add_trace(go.Scatter(x=ROC_curve['FPR'], y=ROC_curve['TPR'],  name=field))
+      y = df[field].replace({1: 2, 0: 1})
+      fpr, tpr, thresholds = metrics.roc_curve(y, df['y_t'], pos_label=2)
+      fig.add_trace(go.Scatter(x=fpr, y=tpr,  name=field))
+      auc_scores[field] = metrics.auc(fpr, tpr)
    logger.info(f"calculating X_df for LR")
    field = fields[0]
    df = df_orig[df_orig[field].notnull()]
@@ -43,25 +41,33 @@ def post_process(df_orig, subdir, fields):
    logger.info(f"running LR")
    df['y_t'] = LinearRegression().fit(X_df, df[field]).predict(X_df)
    logger.info(f"calculating ROC curve")
-   for field in fields:
-      ROC_curve = pd.DataFrame([{'x' : x, 
-                                 'TPR' : ((df['y_t'] > x) & (df[field] == 1)).sum()/(df[field] == 1).sum(),
-                                 'FPR' : ((df['y_t'] > x) & (df[field] != 1)).sum()/(df[field] != 1).sum()} 
-                                 for x in np.arange(0,1.1, .01)])
-      fig.add_trace(go.Scatter(x=ROC_curve['FPR'], y=ROC_curve['TPR'],  name=f"{field} Linear Regession"))
    
+   for field in fields:
+      y = df[field].replace({1: 2, 0: 1})
+      fpr, tpr, thresholds = metrics.roc_curve(y, df['y_t'], pos_label=2)
+      fig.add_trace(go.Scatter(x=fpr, y=tpr, name=f"{field} baseline"))
+      auc_scores[f"{field} baseline"] = metrics.auc(fpr, tpr)
 
    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='random',
                            line=dict(color='black', dash='dash')))
-   fig.update_layout(title=title)
+   logger.info(f"writing output")
+   fig.update_layout(title=title,
+                     xaxis_title="FPR",
+                     yaxis_title="TPR")
    fix_and_write(fig=fig,
-                  filename=scenario,
+                  filename=f"{scenario}_{'_'.join(fields)}",
                   output_dir=config['output_dir'])
+   pd.Series(auc_scores).to_csv(config['output_dir'] / f"{scenario}_{'_'.join(fields)}_auc.csv")
+   
 
 def main():
    logger.info(f"Reading df_orig")
-   df_orig = pd.read_csv(config['db_dir'] / 'ballpark.csv')
-   post_process(df_orig=df_orig, subdir=r"vote_2016\2023-08-14_07-47", fields=['voted_2016', 'voted_2020'])
+   subdir = r"D_reg_2016_no_una\2023-08-16_09-14"
+   global scenario
+   scenario = Path(subdir).parts[-2]
+   df_orig = bp.read_data(config, scenario)
+   post_process(df_orig=df_orig, subdir=subdir, fields=['D_2020'])
+   post_process(df_orig=df_orig, subdir=subdir, fields=['D_2016', 'D_2020'])
    
 if __name__ == '__main__':
    main()

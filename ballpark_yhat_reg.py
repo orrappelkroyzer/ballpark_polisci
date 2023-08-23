@@ -149,15 +149,15 @@ def solve_w_y(X,pairwise_constraints_indices,bag_list,
     
     try:
         # logger.info(f"dcp: {prob.is_dcp()}")
-        logger.info("solving with SCS")
-        prob.solve(solver=cp.SCS, verbose=v)
+        logger.info("solving with MOSEK")
+        prob.solve(solver=cp.MOSEK, verbose=v)
         logger.info("Done solving")
     except Exception as e:
         import traceback
         traceback.print_exc()
         try:
-            logger.info('Solving with MOSEK')
-            prob.solve(solver=cp.MOSEK, verbose=v)
+            logger.info('Solving with SCS')
+            prob.solve(solver=cp.SCS, verbose=v)
             logger.info("Done solving")
         except Exception as e:
             import traceback
